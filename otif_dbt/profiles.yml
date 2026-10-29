@@ -1,0 +1,7 @@
+otif_dbt:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '../warehouse/otif.duckdb') }}"
+      threads: 4

@@ -1,0 +1,9 @@
+.venv/
+data/
+warehouse/
+otif_dbt/target/
+otif_dbt/dbt_packages/
+otif_dbt/logs/
+__pycache__/
+.env
+.pytest_cache/
