@@ -36,8 +36,8 @@ The run observed 174 orphans out of 86,958 receipts (0.20%), on seed 20261025 at
 - `otif_dbt/models/intermediate/int_receipts__classified.sql`: `receipt_issue = 'orphan_po_line'` when no PO line matches.
 - `otif_dbt/models/marts/fct_receipts.sql` keeps orphan rows with `is_scoreable = false`.
 - `otif_dbt/models/staging/_staging_models.yml`: `relationships` test on `stg_receipts.po_line_id` with `severity: warn`.
-- Measured: that test returned WARN 174 in every run in `ops.model_run_stats` (for example `229a3d1b24a8`).
-- Measured at 10x: the generator injected 1,736 orphans (`data/raw_10x/_manifest.json`).
+- Measured: that test returned WARN 174 in every 1x run in `ops.model_run_stats` (for example `6ee966cf8190`).
+- Measured at 10x: the same test returned WARN 1,736 in every 10x run (for example `abb809f44412`).
 - Mismatch: there is no `int_receipts__orphaned` model; orphans are flagged in place via `receipt_issue`.
 - Mismatch: there is no `max_orphan_rate` var and no error threshold; the test only warns.
 - Mismatch: the seed is 20261025, not 42.

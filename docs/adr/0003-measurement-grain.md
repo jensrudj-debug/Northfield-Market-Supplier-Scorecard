@@ -39,4 +39,4 @@ Line-level results let a vendor manager show a supplier the exact failing lines.
 - `otif_dbt/models/marts/mart_supplier_otif_weekly.sql`: `otif_pct` is `otif_lines / eligible_lines`.
 - The same file computes `case_fill_rate_pct` from `eligible_cases_received / eligible_cases_ordered`.
 - `otif_dbt/tests/assert_weekly_otif_pct_matches_line_detail.sql`: OTIF % recomputes from lines.
-- Measured: 88,057 rows in `fct_po_lines` at 1x (run `229a3d1b24a8`).
+- Measured: 88,057 rows in `fct_po_lines` at 1x (run `6ee966cf8190`).

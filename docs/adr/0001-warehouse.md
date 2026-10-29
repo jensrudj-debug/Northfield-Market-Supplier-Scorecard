@@ -38,6 +38,6 @@ The full 1x dataset fits in an 11.8 MB database file.
 - `otif_dbt/profiles.yml`: `type: duckdb`, path from `DUCKDB_PATH`.
 - `Makefile`: `DUCKDB_PATH ?= $(CURDIR)/warehouse/otif.duckdb`.
 - `pipeline/load_raw.py` and `pipeline/run_pipeline.py` open the file with `duckdb.connect`.
-- Measured: `warehouse/otif.duckdb` was 11,808,768 bytes after the clean full run `229a3d1b24a8`.
-- Measured: the 10x warehouse `warehouse/otif_10x.duckdb` was 106,180,608 bytes after run `e41cb7ac2a3f`.
+- Measured: `warehouse/otif.duckdb` was 11,808,768 bytes after the clean full run `6ee966cf8190`.
+- Measured: the 10x warehouse `warehouse/otif_10x.duckdb` was 97,529,856 bytes after its first full run `abb809f44412`.
 - See `docs/cost_profile.md` for the full measurements.

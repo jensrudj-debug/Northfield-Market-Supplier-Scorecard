@@ -14,8 +14,8 @@
 - `make daily` only moves forward. A backdated daily run fails tests; backfills need `make run RUN_DATE=...` (found in review).
 - `make setup`, `make build`, `make test`, `make docs`, and `make clean` only echo text; they do nothing yet (found in review).
 - The pytest suites in `generator/tests` and `pipeline/tests` are not run by any make target (found in review).
-- `dbt deps` and `dbt source freshness` run every time, adding 24.6–51.6 s per run (found in review; `docs/cost_profile.md`).
-- DuckDB files do not shrink on rerun. The 10x file grew from 106.2 MB to 156.3 MB after one more full run (found in review).
+- `dbt deps` and `dbt source freshness` run every time, adding 31.1–48.7 s per run (found in review; `docs/cost_profile.md`).
+- DuckDB files do not shrink on rerun. The 10x file grew from 97.5 MB to 156.3 MB after four more runs (found in review).
 - `pipeline/run_pipeline.py` hard-codes `data/raw` and `config/generator.yml`; `make run-10x` overrides them at runtime (found in review).
 - The generator supports at most 128 suppliers (16 name prefixes x 8 suffixes) (found in review).
 - Source freshness compares `_loaded_at` to wall-clock time, not `run_date`, so reloading old data always looks fresh (found in review).
@@ -40,20 +40,20 @@ The order differs from the planned list. The 10x run showed the receipt chain gr
 Measurements come from `docs/cost_profile.md`.
 
 1. **Receipt dedup and parsing in the staging views.**
-   - Evidence: `fct_receipts` went from 0.76–1.71 s at 1x to 8.25–9.76 s at 10x (4.8–12.8x).
+   - Evidence: `fct_receipts` went from 1.59–1.62 s at 1x to 4.88–9.17 s at 10x in full runs (3.0–5.8x).
    - Staging and intermediate are views, so `stg_receipts` (dedup window plus timestamp parsing) reruns in every build.
-   - The incremental `fct_receipts` took 0.56–0.78 s, close to its 0.76 s full refresh, so incrementality saves little.
+   - The incremental `fct_receipts` took 1.14–1.60 s at 1x, close to its 1.59–1.62 s full refresh, so incrementality saves little.
    - Fix: materialize the deduplicated receipts incrementally, or dedup during load.
    - Memory note: the planned item named "window functions in the rolling-average step". There is no rolling average in the code.
    - The only window function is `row_number()` in `stg_receipts.sql`. Peak memory: TODO: measure, because no run recorded memory use.
 2. **Full rebuild of `fct_po_lines`.**
-   - Evidence: 0.87–2.21 s at 1x, 2.84–4.46 s at 10x. It rebuilds all history every run.
+   - Evidence: 1.88–2.49 s at 1x, 2.41–4.49 s at 10x, in full runs. It rebuilds all history every run.
    - Fix: make it incremental, with a lookback covering `missed_after_days` (7) plus the maximum recording lag (5 days observed).
 3. **DuckDB allows one writer, so dashboards reading during a build conflict.**
    - Evidence: TODO: measure. No concurrent reader was tested.
    - Fix: move to a client-server warehouse (ADR 0001 revisit trigger).
 
-At 10x, no step was near a limit: total runs took 129.1–156.6 s on a laptop with 7.6 GB RAM.
+At 10x, no step was near a limit: 10x full runs took 134.4–234.5 s on a laptop with 7.6 GB RAM.
 
 # Out of scope
 

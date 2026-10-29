@@ -37,6 +37,6 @@ This matches the Monday vendor review.
 - `otif_dbt/models/marts/_marts_models.yml`: `unique_combination_of_columns` on `supplier_id, attribution_week_start`.
 - `otif_dbt/models/marts/fct_po_lines.sql`: includes `dc_id`.
 - `otif_dbt/tests/assert_weekly_mart_reconciles_to_fct_po_lines.sql`: weekly totals equal line totals.
-- Measured: `mart_supplier_otif_weekly` had 3,995 rows in all six 1x runs in `ops.model_run_stats`.
-- Measured after run `94f3e99b1a3f`: 1 to 100 eligible lines per supplier-week, median 18.
-- Measured at 10x: 4,738 rows (run `0258dc3d4793`), so the scorecard stays small as volume grows.
+- Measured: `mart_supplier_otif_weekly` had 3,995 rows in all five 1x runs in `ops.model_run_stats`.
+- Measured after run `fc411770157a`: 1 to 100 eligible lines per supplier-week, median 18.
+- Measured at 10x: 4,738 rows (run `abb809f44412`), so the scorecard stays small as volume grows.
