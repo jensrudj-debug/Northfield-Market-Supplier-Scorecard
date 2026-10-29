@@ -1,0 +1,27 @@
+-- One row per PO line (charter "Measurement grain") with OTIF outcome flags as of run_date.
+select
+    po_line_id,
+    po_number,
+    supplier_id,
+    dc_id,
+    sku,
+    line_status,
+    requested_delivery_date,
+    attribution_week_start,
+    attribution_iso_week,
+    ordered_cases,
+    first_receipt_at,
+    first_receipt_date,
+    receipt_count,
+    cases_received_total,
+    cases_received_in_window,
+    cases_rejected_total,
+    is_eligible,
+    is_on_time,
+    is_in_full,
+    is_otif,
+    is_missed,
+    is_over_shipment,
+    is_provisional,
+    as_of_date
+from {{ ref('int_po_lines__otif') }}

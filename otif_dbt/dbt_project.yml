@@ -36,3 +36,4 @@ vars:
   missed_after_days: 7              # Missed line: no receipt by requested date + 7 days
   provisional_days_after_week: 7    # Provisional: until 7 days after the attribution week ends
   over_shipment_threshold: 1.05     # Over-shipment: received above 105% of ordered
+  receipt_lookback_days: 7          # fct_receipts incremental: reprocess partitions recorded this many days before the latest loaded

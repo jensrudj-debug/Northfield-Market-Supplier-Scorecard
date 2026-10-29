@@ -1,0 +1,243 @@
+version: 2
+
+# Published tables (CLAUDE.md): fct_po_lines, fct_receipts, mart_supplier_otif_weekly.
+# Percentages are 0-100, rounded to 2 decimals, and NULL when eligible_lines = 0.
+
+models:
+  - name: fct_receipts
+    description: >
+      One row per dock receipt recorded on or before run_date, including receipts
+      that can't be scored (see receipt_issue). Incremental (delete+insert on
+      receipt_id) with a receipt_lookback_days window on recorded_date; run with
+      --full-refresh after changing run_date backwards or reloading old partitions.
+    columns:
+      - name: receipt_id
+        description: Receipt key.
+        data_tests: [unique, not_null]
+      - name: po_line_id
+        description: PO line received against; may not exist for orphan receipts.
+        data_tests: [not_null]
+      - name: po_number
+        description: PO received against, as recorded at the dock.
+      - name: supplier_id
+        description: Supplier of the matched PO; null for orphans.
+      - name: dc_id
+        description: Receiving DC.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_distribution_centers'), field: dc_id}
+      - name: sku
+        description: SKU received (normalized).
+        data_tests: [not_null]
+      - name: requested_delivery_date
+        description: Requested delivery date of the matched PO; null for orphans.
+      - name: received_at
+        description: Receipt timestamp, DC local time; null when missing in the source.
+      - name: received_date
+        description: DC local date of received_at.
+      - name: recorded_date
+        description: Date the receipt was recorded (raw partition); drives the incremental window.
+        data_tests: [not_null]
+      - name: days_from_requested
+        description: received_date minus requested_delivery_date (negative = early).
+      - name: received_cases
+        description: Cases received as recorded (zero/negative values are flagged, not fixed).
+        data_tests: [not_null]
+      - name: rejected_cases
+        description: Cases refused at the dock.
+        data_tests: [not_null]
+      - name: receipt_issue
+        description: Null when scoreable; else orphan_po_line, missing_received_at, or nonpositive_cases.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [orphan_po_line, missing_received_at, nonpositive_cases]
+      - name: is_scoreable
+        description: True when the receipt counts toward OTIF.
+        data_tests: [not_null]
+      - name: is_in_on_time_window
+        description: Scoreable and received within the charter's on-time window.
+        data_tests: [not_null]
+
+  - name: fct_po_lines
+    description: >
+      One row per PO line (charter "Measurement grain") with OTIF outcome flags
+      evaluated as of run_date. Filter is_eligible for scorecard math.
+    columns:
+      - name: po_line_id
+        description: PO line key.
+        data_tests: [unique, not_null]
+      - name: po_number
+        description: Parent PO.
+        data_tests: [not_null]
+      - name: supplier_id
+        description: Supplier on the PO.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_suppliers'), field: supplier_id}
+      - name: dc_id
+        description: Receiving DC.
+        data_tests: [not_null]
+      - name: sku
+        description: SKU ordered.
+        data_tests: [not_null]
+      - name: line_status
+        description: active, cancelled_by_northfield, or cancelled_by_supplier.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [active, cancelled_by_northfield, cancelled_by_supplier]
+      - name: requested_delivery_date
+        description: Requested delivery date (DC local date).
+        data_tests: [not_null]
+      - name: attribution_week_start
+        description: Monday of the ISO week of requested_delivery_date.
+        data_tests: [not_null]
+      - name: attribution_iso_week
+        description: ISO year-week label, e.g. 2026-W43.
+      - name: ordered_cases
+        description: Cases ordered.
+      - name: first_receipt_at
+        description: First scoreable receipt timestamp; null if none yet.
+      - name: first_receipt_date
+        description: DC local date of first_receipt_at.
+      - name: receipt_count
+        description: Number of scoreable receipts.
+      - name: cases_received_total
+        description: Scoreable cases received up to run_date (case fill rate numerator).
+      - name: cases_received_in_window
+        description: Scoreable cases received inside the on-time window (in-full numerator).
+      - name: cases_rejected_total
+        description: Cases refused at the dock.
+      - name: is_eligible
+        description: Charter "Eligible line" — due on or before run_date and not cancelled by Northfield.
+        data_tests: [not_null]
+      - name: is_on_time
+        description: Charter "On time".
+        data_tests: [not_null]
+      - name: is_in_full
+        description: Charter "In full".
+        data_tests: [not_null]
+      - name: is_otif
+        description: Charter "OTIF".
+        data_tests: [not_null]
+      - name: is_missed
+        description: Charter "Missed line".
+        data_tests: [not_null]
+      - name: is_over_shipment
+        description: Charter "Over-shipment".
+        data_tests: [not_null]
+      - name: is_provisional
+        description: Charter "Provisional".
+        data_tests: [not_null]
+      - name: as_of_date
+        description: var('run_date') the flags were evaluated at.
+
+  - name: mart_supplier_otif_weekly
+    description: >
+      Weekly OTIF scorecard: one row per supplier per attribution week (both DCs
+      combined), for weeks starting on or before run_date. Used in the Monday
+      vendor review. Rows with is_provisional = true can still change.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [supplier_id, attribution_week_start]
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "(eligible_lines = 0) = (otif_pct is null)"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "otif_lines <= on_time_lines and otif_lines <= in_full_lines and on_time_lines <= eligible_lines and in_full_lines <= eligible_lines"
+    columns:
+      - name: supplier_id
+        description: Supplier key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_suppliers'), field: supplier_id}
+      - name: supplier_name
+        description: Supplier name.
+        data_tests: [not_null]
+      - name: supplier_category
+        description: Supplier merchandise category.
+      - name: attribution_week_start
+        description: Monday of the ISO attribution week.
+        data_tests: [not_null]
+      - name: attribution_week_end
+        description: Sunday of the ISO attribution week.
+      - name: attribution_iso_week
+        description: ISO year-week label, e.g. 2026-W43.
+      - name: is_provisional
+        description: True until 7 days after the week ends (charter "Provisional").
+        data_tests: [not_null]
+      - name: as_of_date
+        description: var('run_date') the scorecard was computed at.
+      - name: total_lines
+        description: All PO lines attributed to the week, including Northfield-cancelled.
+      - name: eligible_lines
+        description: Lines due and not cancelled by Northfield (OTIF % denominator).
+      - name: otif_lines
+        description: Eligible lines that were on time and in full (OTIF % numerator).
+      - name: on_time_lines
+        description: Eligible lines that were on time.
+      - name: in_full_lines
+        description: Eligible lines that were in full.
+      - name: missed_lines
+        description: Eligible lines with no receipt by requested date + 7 days.
+      - name: supplier_cancelled_lines
+        description: Eligible lines cancelled by the supplier (counted as failures).
+      - name: northfield_cancelled_lines
+        description: Lines cancelled by Northfield (excluded from eligibility).
+      - name: over_shipment_lines
+        description: Eligible lines received above 105% of ordered.
+      - name: eligible_cases_ordered
+        description: Cases ordered on eligible lines (case fill rate denominator).
+      - name: eligible_cases_received
+        description: Scoreable cases received on eligible lines (case fill rate numerator).
+      - name: otif_pct
+        description: 100 x otif_lines / eligible_lines; NULL when eligible_lines = 0.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 100}
+      - name: on_time_pct
+        description: 100 x on_time_lines / eligible_lines; NULL when eligible_lines = 0.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 100}
+      - name: in_full_pct
+        description: 100 x in_full_lines / eligible_lines; NULL when eligible_lines = 0.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 100}
+      - name: case_fill_rate_pct
+        description: 100 x eligible_cases_received / eligible_cases_ordered (can exceed 100 with over-shipments); NULL when eligible_lines = 0.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0}
+
+unit_tests:
+  - name: test_weekly_pcts_null_when_no_eligible_lines
+    description: >
+      A supplier-week whose only line was cancelled by Northfield has
+      eligible_lines = 0 and NULL percentages; a normal week computes OTIF %,
+      and supplier-cancelled lines count in the denominator.
+    model: mart_supplier_otif_weekly
+    given:
+      - input: ref('fct_po_lines')
+        rows:
+          - {po_line_id: A1, supplier_id: S1, line_status: active, attribution_week_start: "2026-10-05", attribution_iso_week: 2026-W41, as_of_date: "2026-10-25", ordered_cases: 10, cases_received_total: 10, is_eligible: true, is_otif: true, is_on_time: true, is_in_full: true, is_missed: false, is_over_shipment: false, is_provisional: false}
+          - {po_line_id: A2, supplier_id: S1, line_status: active, attribution_week_start: "2026-10-05", attribution_iso_week: 2026-W41, as_of_date: "2026-10-25", ordered_cases: 10, cases_received_total: 5, is_eligible: true, is_otif: false, is_on_time: true, is_in_full: false, is_missed: false, is_over_shipment: false, is_provisional: false}
+          - {po_line_id: A3, supplier_id: S1, line_status: cancelled_by_supplier, attribution_week_start: "2026-10-05", attribution_iso_week: 2026-W41, as_of_date: "2026-10-25", ordered_cases: 20, cases_received_total: 0, is_eligible: true, is_otif: false, is_on_time: false, is_in_full: false, is_missed: true, is_over_shipment: false, is_provisional: false}
+          - {po_line_id: A4, supplier_id: S1, line_status: active, attribution_week_start: "2026-10-05", attribution_iso_week: 2026-W41, as_of_date: "2026-10-25", ordered_cases: 10, cases_received_total: 10, is_eligible: true, is_otif: true, is_on_time: true, is_in_full: true, is_missed: false, is_over_shipment: false, is_provisional: false}
+          - {po_line_id: B1, supplier_id: S2, line_status: cancelled_by_northfield, attribution_week_start: "2026-10-05", attribution_iso_week: 2026-W41, as_of_date: "2026-10-25", ordered_cases: 10, cases_received_total: 0, is_eligible: false, is_otif: false, is_on_time: false, is_in_full: false, is_missed: false, is_over_shipment: false, is_provisional: false}
+          - {po_line_id: C1, supplier_id: S1, line_status: active, attribution_week_start: "2026-11-02", attribution_iso_week: 2026-W45, as_of_date: "2026-10-25", ordered_cases: 10, cases_received_total: 0, is_eligible: false, is_otif: false, is_on_time: false, is_in_full: false, is_missed: false, is_over_shipment: false, is_provisional: true}
+      - input: ref('stg_suppliers')
+        rows:
+          - {supplier_id: S1, supplier_name: Supplier One}
+          - {supplier_id: S2, supplier_name: Supplier Two}
+    expect:
+      rows:
+        - {supplier_id: S1, attribution_week_start: "2026-10-05", total_lines: 4, eligible_lines: 4, otif_lines: 2, supplier_cancelled_lines: 1, otif_pct: 50.00, on_time_pct: 75.00, in_full_pct: 50.00, case_fill_rate_pct: 50.00}
+        - {supplier_id: S2, attribution_week_start: "2026-10-05", total_lines: 1, eligible_lines: 0, otif_lines: 0, supplier_cancelled_lines: 0, otif_pct: null, on_time_pct: null, in_full_pct: null, case_fill_rate_pct: null}
