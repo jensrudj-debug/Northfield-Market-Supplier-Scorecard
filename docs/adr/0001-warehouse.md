@@ -40,4 +40,6 @@ The full 1x dataset fits in an 11.8 MB database file.
 - `pipeline/load_raw.py` and `pipeline/run_pipeline.py` open the file with `duckdb.connect`.
 - Measured: `warehouse/otif.duckdb` was 11,808,768 bytes after the clean full run `6ee966cf8190`.
 - Measured: the 10x warehouse `warehouse/otif_10x.duckdb` was 97,529,856 bytes after its first full run `abb809f44412`.
+- Measured: during a 1x `dbt build`, 11 of 22 read-only connection attempts failed because the file was locked.
+- Measured: peak `dbt build` memory was 301.2 MB at 1x and 891.2 MB at 10x (`docs/limitations.md`).
 - See `docs/cost_profile.md` for the full measurements.

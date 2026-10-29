@@ -12,11 +12,8 @@
 - A line whose only receipts are unscoreable (missing timestamp, zero cases) is scored as not received and can become missed (found in review).
 - A line due on `run_date` with no receipt yet counts as not on time until a receipt is recorded (found in review).
 - `make daily` only moves forward. A backdated daily run fails tests; backfills need `make run RUN_DATE=...` (found in review).
-- `make setup`, `make build`, `make test`, `make docs`, and `make clean` only echo text; they do nothing yet (found in review).
-- The pytest suites in `generator/tests` and `pipeline/tests` are not run by any make target (found in review).
 - `dbt deps` and `dbt source freshness` run every time, adding 31.1–48.7 s per run (found in review; `docs/cost_profile.md`).
 - DuckDB files do not shrink on rerun. The 10x file grew from 97.5 MB to 156.3 MB after four more runs (found in review).
-- `pipeline/run_pipeline.py` hard-codes `data/raw` and `config/generator.yml`; `make run-10x` overrides them at runtime (found in review).
 - The generator supports at most 128 suppliers (16 name prefixes x 8 suffixes) (found in review).
 - Source freshness compares `_loaded_at` to wall-clock time, not `run_date`, so reloading old data always looks fresh (found in review).
 
@@ -36,24 +33,27 @@
 
 # What breaks first under load
 
-The order differs from the planned list. The 10x run showed the receipt chain growing fastest, so it is first.
-Measurements come from `docs/cost_profile.md`.
+The order differs from the planned list. Reader conflicts already happen at 1x, so they come first.
+The receipt chain grew fastest at 10x, so it comes second. Timings come from `docs/cost_profile.md`.
+Memory and reader conflicts were measured on 2026-10-28 by polling the `dbt build` process tree with `psutil`.
+While it ran, the measurement also opened a read-only DuckDB connection once per second.
 
-1. **Receipt dedup and parsing in the staging views.**
+1. **DuckDB allows one writer, so dashboards reading during a build conflict.**
+   - Evidence at 1x: 11 of 22 read attempts during a 27.7 s `dbt build` failed with "The process cannot access the file".
+   - Evidence at 10x: 22 of 34 read attempts during a 41.9 s build failed the same way.
+   - Fix: move to a client-server warehouse (ADR 0001 revisit trigger), or publish a read-only copy after each build.
+2. **Receipt dedup and parsing in the staging views.**
    - Evidence: `fct_receipts` went from 1.59–1.62 s at 1x to 4.88–9.17 s at 10x in full runs (3.0–5.8x).
    - Staging and intermediate are views, so `stg_receipts` (dedup window plus timestamp parsing) reruns in every build.
    - The incremental `fct_receipts` took 1.14–1.60 s at 1x, close to its 1.59–1.62 s full refresh, so incrementality saves little.
    - Fix: materialize the deduplicated receipts incrementally, or dedup during load.
-   - Memory note: the planned item named "window functions in the rolling-average step". There is no rolling average in the code.
-   - The only window function is `row_number()` in `stg_receipts.sql`. Peak memory: TODO: measure, because no run recorded memory use.
-2. **Full rebuild of `fct_po_lines`.**
+   - Memory: the planned item named a "rolling-average step"; there is none. The only window function is `row_number()` in `stg_receipts.sql`.
+   - Peak memory of the `dbt build` process tree was 301.2 MB at 1x and 891.2 MB at 10x (3.0x).
+3. **Full rebuild of `fct_po_lines`.**
    - Evidence: 1.88–2.49 s at 1x, 2.41–4.49 s at 10x, in full runs. It rebuilds all history every run.
    - Fix: make it incremental, with a lookback covering `missed_after_days` (7) plus the maximum recording lag (5 days observed).
-3. **DuckDB allows one writer, so dashboards reading during a build conflict.**
-   - Evidence: TODO: measure. No concurrent reader was tested.
-   - Fix: move to a client-server warehouse (ADR 0001 revisit trigger).
 
-At 10x, no step was near a limit: 10x full runs took 134.4–234.5 s on a laptop with 7.6 GB RAM.
+At 10x, no volume-driven step was near a limit. Full runs took 134.4–234.5 s, and peak build memory was 891.2 MB of 7.6 GB RAM.
 
 # Out of scope
 

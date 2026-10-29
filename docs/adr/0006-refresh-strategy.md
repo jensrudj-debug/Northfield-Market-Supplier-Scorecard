@@ -31,9 +31,9 @@ Each run reprocesses receipts recorded within `receipt_lookback_days` (7) of the
 - Backfills need `make run RUN_DATE=...`. A backdated `make daily` leaves later receipts behind.
 
 ## Revisit when
-- The full rebuild of `fct_po_lines` exceeds [AGREED SHARE] of the refresh window.
+- The full rebuild of `fct_po_lines` exceeds 6 minutes: 10% of an assumed 5:00-6:00 a.m. Central window.
+- The charter sets only the 6:00 a.m. deadline; the one-hour window is our assumption.
 - In 10x full runs it took 2.41 s and 4.49 s; in 1x full runs, 1.88 to 2.49 s.
-- TODO: agree on the refresh window start time; the charter only gives the 6:00 a.m. deadline.
 
 ## Evidence in repo
 - `otif_dbt/models/marts/fct_receipts.sql`: `materialized='incremental'`, `incremental_strategy='delete+insert'`, `unique_key='receipt_id'`.

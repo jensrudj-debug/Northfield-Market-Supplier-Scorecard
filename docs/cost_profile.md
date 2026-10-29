@@ -98,11 +98,13 @@ Standard edition fits this workload: one scheduled batch needs no multi-cluster 
 
 Run from the repo root on the machine above, on 2026-10-28, at commit `7f959f2` plus this document.
 `ops.run_log` has no commit column, so earlier runs could not be tied to a commit; all runs here are fresh.
+`ops.run_log` lives in the git-ignored warehouse, so these run_ids exist only until the next `make clean`.
+Later commits changed `make clean` (now implemented) and added `--config`/`--raw-dir` to `run_pipeline.py`.
+The commands below use those; at measurement time the same steps were done by hand and with an inline override.
 
 ```sh
-# 1x: clean, then a full run. `make clean` only echoes, so the clean is done by hand.
+# 1x: clean, then a full run.
 make clean
-rm -rf warehouse data/raw data/raw_10x otif_dbt/target
 make run                                 # 6ee966cf8190  (run_date 2026-10-25)
 ls -l warehouse/otif.duckdb              # 11,808,768 bytes
 du -sb data/raw                          # 11,218,703 bytes
@@ -118,13 +120,13 @@ make run-10x                             # abb809f44412  (run_date 2026-10-25)
 ls -l warehouse/otif_10x.duckdb          # 97,529,856 bytes
 du -sb data/raw_10x                      # 110,961,823 bytes
 
-# 10x dailies. There is no make target, so the same override as run-10x is used inline.
-export DUCKDB_PATH="$(pwd -W)/warehouse/otif_10x.duckdb"   # Git Bash; use $(pwd) elsewhere
-run10x() { .venv/Scripts/python -c "import sys; from datetime import date; from pathlib import Path; from pipeline import run_pipeline as rp; rp.GENERATOR_CONFIG = Path('config/generator_10x.yml').resolve(); rp.RAW_DIR = Path('data/raw_10x').resolve(); sys.exit(0 if rp.run_pipeline('$1', date.fromisoformat('$2')) else 1)"; }
-run10x full 2026-10-22                   # 6ada1565695c
-run10x daily 2026-10-23                  # 2f76ed2d1d1d
-run10x daily 2026-10-24                  # 50c7536659d0
-run10x daily 2026-10-25                  # 3d9cebf117b3
+# 10x dailies (no make target). Use an absolute DUCKDB_PATH; in Git Bash, $(pwd -W) gives a Windows path.
+export DUCKDB_PATH="$(pwd)/warehouse/otif_10x.duckdb"
+TENX="--config config/generator_10x.yml --raw-dir data/raw_10x"
+python pipeline/run_pipeline.py --mode full  --run-date 2026-10-22 $TENX   # 6ada1565695c
+python pipeline/run_pipeline.py --mode daily --run-date 2026-10-23 $TENX   # 2f76ed2d1d1d
+python pipeline/run_pipeline.py --mode daily --run-date 2026-10-24 $TENX   # 50c7536659d0
+python pipeline/run_pipeline.py --mode daily --run-date 2026-10-25 $TENX   # 3d9cebf117b3
 
 # Machine
 powershell -Command "Get-CimInstance Win32_Processor; Get-CimInstance Win32_ComputerSystem; Get-CimInstance Win32_OperatingSystem"
@@ -172,4 +174,6 @@ select duration_seconds from ops.run_log where run_id = ? and step = 'dbt_build'
 10x config: `config/generator_10x.yml` changes only `pos_per_supplier_dc_week` from 1.0 to 10.0, same seed.
 Supplier count stays at 60: `generator/generate.py` supports at most 128 supplier names (16 prefixes x 8 suffixes).
 
-Pricing source: user-supplied Snowflake per-credit pricing, checked 2026-10-28, URL: [PRICING_URL - add before submitting].
+Pricing source: user-supplied Snowflake per-credit pricing, checked 2026-10-28.
+Snowflake's pricing page is https://www.snowflake.com/en/pricing-options/; it does not list per-credit rates.
+Rates by region and edition are in the consumption table linked from that page.
