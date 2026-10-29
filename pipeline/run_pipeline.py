@@ -29,9 +29,9 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DBT_DIR = REPO_ROOT / "otif_dbt"
-RAW_DIR = REPO_ROOT / "data" / "raw"
+DEFAULT_RAW_DIR = REPO_ROOT / "data" / "raw"
 LOG_ROOT = REPO_ROOT / "logs"
-GENERATOR_CONFIG = REPO_ROOT / "config" / "generator.yml"
+DEFAULT_GENERATOR_CONFIG = REPO_ROOT / "config" / "generator.yml"
 REFERENCE_FILES = ["suppliers.csv", "products.csv", "distribution_centers.csv", "purchase_orders.csv", "po_lines.csv"]
 
 OPS_DDL = [
@@ -53,6 +53,8 @@ class RunContext:
     db_path: Path
     log_dir: Path
     env: dict
+    raw_dir: Path
+    generator_config: Path
 
 
 def utc_now() -> datetime:
@@ -60,8 +62,8 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def default_run_date() -> date:
-    with open(GENERATOR_CONFIG, encoding="utf-8") as f:
+def default_run_date(generator_config: Path) -> date:
+    with open(generator_config, encoding="utf-8") as f:
         return date.fromisoformat(str(yaml.safe_load(f)["end_date"]))
 
 
@@ -123,17 +125,17 @@ def run_dbt(ctx: RunContext, step: str, dbt_args: list[str]) -> None:
 
 def step_generate(ctx: RunContext) -> None:
     run_logged(ctx, "generate", [sys.executable, "generator/generate.py",
-                                 "--config", str(GENERATOR_CONFIG), "--out-dir", str(RAW_DIR)], REPO_ROOT)
+                                 "--config", str(ctx.generator_config), "--out-dir", str(ctx.raw_dir)], REPO_ROOT)
 
 
 def step_check_raw_data(ctx: RunContext) -> None:
-    missing = [name for name in REFERENCE_FILES if not (RAW_DIR / name).exists()]
-    if missing or not (RAW_DIR / "receipts").is_dir():
-        raise FileNotFoundError(f"{RAW_DIR} is incomplete ({missing or 'receipts/'}); run make generate first")
+    missing = [name for name in REFERENCE_FILES if not (ctx.raw_dir / name).exists()]
+    if missing or not (ctx.raw_dir / "receipts").is_dir():
+        raise FileNotFoundError(f"{ctx.raw_dir} is incomplete ({missing or 'receipts/'}); run make generate first")
 
 
 def step_load_raw(ctx: RunContext) -> None:
-    args = [sys.executable, "pipeline/load_raw.py", "--raw-dir", str(RAW_DIR)]
+    args = [sys.executable, "pipeline/load_raw.py", "--raw-dir", str(ctx.raw_dir)]
     if ctx.mode == "daily":
         args += ["--start-date", ctx.run_date.isoformat(), "--end-date", ctx.run_date.isoformat()]
     run_logged(ctx, "load_raw", args, REPO_ROOT)
@@ -214,7 +216,8 @@ def print_summary(ctx: RunContext, outcomes: list[tuple[str, str, float | None, 
         print("\ndbt nodes: " + ", ".join(f"{rtype} {status}={n}" for rtype, status, n in stats))
 
 
-def run_pipeline(mode: str, run_date: date) -> bool:
+def run_pipeline(mode: str, run_date: date, raw_dir: Path = DEFAULT_RAW_DIR,
+                 generator_config: Path = DEFAULT_GENERATOR_CONFIG) -> bool:
     db_path = Path(os.environ.get("DUCKDB_PATH") or sys.exit("DUCKDB_PATH is not set; see .env.example"))
     run_id = uuid.uuid4().hex[:12]
     ctx = RunContext(
@@ -224,6 +227,8 @@ def run_pipeline(mode: str, run_date: date) -> bool:
         db_path=db_path,
         log_dir=LOG_ROOT / run_id,
         env={**os.environ, "RUN_DATE": run_date.isoformat(), "PYTHONIOENCODING": "utf-8"},
+        raw_dir=raw_dir.resolve(),
+        generator_config=generator_config.resolve(),
     )
     ctx.log_dir.mkdir(parents=True, exist_ok=True)
     init_ops_tables(db_path)
@@ -255,10 +260,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--mode", choices=sorted(STEPS), required=True)
     parser.add_argument("--run-date", type=date.fromisoformat,
                         help="business date (required for daily; full defaults to the generator end_date)")
+    parser.add_argument("--config", type=Path, default=DEFAULT_GENERATOR_CONFIG, help="generator config (full mode)")
+    parser.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW_DIR, help="raw data directory")
     args = parser.parse_args(argv)
     if args.mode == "daily" and args.run_date is None:
         parser.error("--run-date is required for --mode daily")
-    ok = run_pipeline(args.mode, args.run_date or default_run_date())
+    ok = run_pipeline(args.mode, args.run_date or default_run_date(args.config), args.raw_dir, args.config)
     sys.exit(0 if ok else 1)
 
 

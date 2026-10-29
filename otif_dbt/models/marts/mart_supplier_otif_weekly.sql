@@ -30,8 +30,8 @@ weekly as (
         count(*) filter (where is_eligible and line_status = 'cancelled_by_supplier') as supplier_cancelled_lines,
         count(*) filter (where line_status = 'cancelled_by_northfield') as northfield_cancelled_lines,
         count(*) filter (where is_eligible and is_over_shipment) as over_shipment_lines,
-        coalesce(sum(ordered_cases) filter (where is_eligible), 0) as eligible_cases_ordered,
-        coalesce(sum(cases_received_total) filter (where is_eligible), 0) as eligible_cases_received
+        cast(coalesce(sum(ordered_cases) filter (where is_eligible), 0) as bigint) as eligible_cases_ordered,
+        cast(coalesce(sum(cases_received_total) filter (where is_eligible), 0) as bigint) as eligible_cases_received
     from po_lines
     group by supplier_id, attribution_week_start
 

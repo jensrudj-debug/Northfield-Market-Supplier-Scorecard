@@ -1,5 +1,7 @@
 """Tests for pipeline/load_raw.py."""
 
+from datetime import date
+
 import duckdb
 import pytest
 
@@ -42,5 +44,5 @@ def test_loading_same_range_twice_gives_identical_counts(raw_dir, tmp_path, monk
     assert all(START <= d <= END for d in per_batch)
     expected = sum(
         sum(1 for _ in path.open()) - 1  # minus header
-        for _, path in load_raw.list_receipt_partitions(raw_dir, *map(load_raw.date.fromisoformat, (START, END))))
+        for _, path in load_raw.list_receipt_partitions(raw_dir, *map(date.fromisoformat, (START, END))))
     assert per_table["receipts"] == expected > 0
