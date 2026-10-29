@@ -13,7 +13,7 @@ Data refreshes daily by 6:00 a.m. Central, and a week's score stays provisional 
 
 ## Video walkthrough
 
-[VIDEO_LINK - added in Step 4]
+[Watch the walkthrough on Google Drive](https://drive.google.com/file/d/1RvFGMDm5acA61sFsok5ec05XaQ-GP4Bp/view?usp=sharing)
 
 ## What it produces
 
