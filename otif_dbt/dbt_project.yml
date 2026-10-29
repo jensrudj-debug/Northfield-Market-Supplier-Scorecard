@@ -26,3 +26,13 @@ models:
     marts:
       +materialized: table
       +schema: marts
+
+# OTIF definitions from docs/charter.md. Change thresholds here, never in SQL.
+vars:
+  run_date: "{{ env_var('RUN_DATE', '2026-10-25') }}"  # as-of date; replaces current_date everywhere
+  on_time_days_early: 1             # On time: first receipt no more than 1 day before requested date
+  on_time_days_late: 0              # On time: ... and no more than 0 days after
+  in_full_threshold: 0.98           # In full: in-window cases >= 98% of ordered cases
+  missed_after_days: 7              # Missed line: no receipt by requested date + 7 days
+  provisional_days_after_week: 7    # Provisional: until 7 days after the attribution week ends
+  over_shipment_threshold: 1.05     # Over-shipment: received above 105% of ordered

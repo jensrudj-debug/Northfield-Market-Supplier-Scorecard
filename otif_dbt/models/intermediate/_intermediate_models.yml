@@ -1,0 +1,242 @@
+version: 2
+
+# Intermediate: the charter's OTIF definitions (docs/charter.md), evaluated as of
+# var('run_date'). Thresholds live in dbt_project.yml vars.
+
+models:
+  - name: int_receipts__classified
+    description: >
+      One row per staged receipt recorded on or before run_date, matched to its PO
+      line and requested delivery date, with a receipt_issue explaining why it
+      can't be scored (orphan, missing timestamp, non-positive cases) and whether
+      it falls inside the charter's on-time window.
+    columns:
+      - name: receipt_id
+        description: Receipt key.
+        data_tests: [unique, not_null]
+      - name: requested_delivery_date
+        description: Requested delivery date of the matched PO; null for orphans.
+      - name: days_from_requested
+        description: received_date minus requested_delivery_date, in days (negative = early).
+      - name: has_po_line
+        description: True when po_line_id matches a PO line.
+      - name: receipt_issue
+        description: Null when scoreable; otherwise orphan_po_line, missing_received_at, or nonpositive_cases (first that applies).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [orphan_po_line, missing_received_at, nonpositive_cases]
+      - name: is_scoreable
+        description: True when receipt_issue is null; only these receipts count toward OTIF.
+        data_tests: [not_null]
+      - name: is_in_on_time_window
+        description: Scoreable receipt dated between requested date - on_time_days_early and + on_time_days_late.
+        data_tests: [not_null]
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "not is_in_on_time_window or is_scoreable"
+
+  - name: int_po_lines__receipt_rollup
+    description: One row per PO line with at least one scoreable receipt; first receipt and case totals.
+    columns:
+      - name: po_line_id
+        description: PO line key.
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_po_lines'), field: po_line_id}
+      - name: first_receipt_at
+        description: Earliest scoreable receipt timestamp (DC local time).
+        data_tests: [not_null]
+      - name: first_receipt_date
+        description: DC local date of first_receipt_at.
+      - name: receipt_count
+        description: Number of scoreable receipts.
+      - name: cases_received_total
+        description: All scoreable cases received for the line, any date up to run_date.
+      - name: cases_received_in_window
+        description: Scoreable cases received inside the on-time window.
+      - name: cases_rejected_total
+        description: Cases refused at the dock across scoreable receipts.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "cases_received_in_window <= cases_received_total"
+
+  - name: int_po_lines__otif
+    description: >
+      One row per PO line (charter "Measurement grain") with eligibility, on time,
+      in full, OTIF, missed, over-shipment, and provisional flags per
+      docs/charter.md, as of run_date. Lines due after run_date are not eligible yet.
+    columns:
+      - name: po_line_id
+        description: PO line key.
+        data_tests: [unique, not_null]
+      - name: supplier_id
+        description: Supplier on the PO.
+        data_tests: [not_null]
+      - name: dc_id
+        description: Receiving DC.
+        data_tests: [not_null]
+      - name: line_status
+        description: active, cancelled_by_northfield, or cancelled_by_supplier.
+      - name: ordered_cases
+        description: Cases ordered.
+      - name: requested_delivery_date
+        description: Requested delivery date (DC local date).
+        data_tests: [not_null]
+      - name: first_receipt_date
+        description: DC local date of the first scoreable receipt; null if none yet.
+      - name: cases_received_total
+        description: Scoreable cases received, any date up to run_date (case fill rate numerator).
+      - name: cases_received_in_window
+        description: Scoreable cases received inside the on-time window (in-full numerator).
+      - name: attribution_week_start
+        description: Monday of the ISO week of requested_delivery_date (charter "Attribution week").
+        data_tests: [not_null]
+      - name: attribution_iso_week
+        description: ISO year-week label of the attribution week, e.g. 2026-W43.
+        data_tests: [not_null]
+      - name: as_of_date
+        description: var('run_date') this row was evaluated at.
+      - name: is_eligible
+        description: Due on or before run_date and not cancelled by Northfield (charter "Eligible line").
+        data_tests: [not_null]
+      - name: is_on_time
+        description: First receipt within the on-time window (charter "On time").
+        data_tests: [not_null]
+      - name: is_in_full
+        description: In-window cases >= in_full_threshold x ordered (charter "In full").
+        data_tests: [not_null]
+      - name: is_otif
+        description: On time and in full (charter "OTIF").
+        data_tests: [not_null]
+      - name: is_missed
+        description: No receipt by requested date + missed_after_days (charter "Missed line").
+        data_tests: [not_null]
+      - name: is_over_shipment
+        description: Cases received above over_shipment_threshold x ordered (charter "Over-shipment").
+        data_tests: [not_null]
+      - name: is_provisional
+        description: Attribution week ended less than provisional_days_after_week days before run_date (charter "Provisional").
+        data_tests: [not_null]
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "not is_otif or (is_on_time and is_in_full)"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "not is_missed or (not is_on_time and not is_in_full)"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "line_status <> 'cancelled_by_supplier' or not is_otif"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "line_status <> 'cancelled_by_northfield' or not is_eligible"
+
+unit_tests:
+  - name: test_on_time_window_and_receipt_issues
+    description: >
+      Charter "On time" window is inclusive at -1 and 0 days; unscoreable receipts
+      never count; receipts recorded after run_date are invisible.
+    model: int_receipts__classified
+    overrides:
+      vars: {run_date: "2026-10-25", on_time_days_early: 1, on_time_days_late: 0}
+    given:
+      - input: ref('stg_receipts')
+        rows:
+          - {receipt_id: R_EARLY2, po_line_id: L1, received_at: "2026-10-05 10:00:00", received_date: "2026-10-05", received_cases: 10, recorded_date: "2026-10-05"}
+          - {receipt_id: R_EARLY1, po_line_id: L1, received_at: "2026-10-06 10:00:00", received_date: "2026-10-06", received_cases: 10, recorded_date: "2026-10-06"}
+          - {receipt_id: R_ONDAY,  po_line_id: L1, received_at: "2026-10-07 23:59:00", received_date: "2026-10-07", received_cases: 10, recorded_date: "2026-10-07"}
+          - {receipt_id: R_LATE1,  po_line_id: L1, received_at: "2026-10-08 00:01:00", received_date: "2026-10-08", received_cases: 10, recorded_date: "2026-10-08"}
+          - {receipt_id: R_ORPHAN, po_line_id: NOPE, received_at: "2026-10-07 10:00:00", received_date: "2026-10-07", received_cases: 10, recorded_date: "2026-10-07"}
+          - {receipt_id: R_NOTS,   po_line_id: L1, received_at: null, received_date: null, received_cases: 10, recorded_date: "2026-10-07"}
+          - {receipt_id: R_ZERO,   po_line_id: L1, received_at: "2026-10-07 10:00:00", received_date: "2026-10-07", received_cases: 0, recorded_date: "2026-10-07"}
+          - {receipt_id: R_FUTURE, po_line_id: L1, received_at: "2026-10-07 10:00:00", received_date: "2026-10-07", received_cases: 10, recorded_date: "2026-10-26"}
+      - input: ref('stg_po_lines')
+        rows:
+          - {po_line_id: L1, po_number: P1}
+      - input: ref('stg_purchase_orders')
+        rows:
+          - {po_number: P1, supplier_id: S1, requested_delivery_date: "2026-10-07"}
+    expect:
+      rows:
+        - {receipt_id: R_EARLY2, receipt_issue: null, is_scoreable: true, is_in_on_time_window: false}
+        - {receipt_id: R_EARLY1, receipt_issue: null, is_scoreable: true, is_in_on_time_window: true}
+        - {receipt_id: R_ONDAY,  receipt_issue: null, is_scoreable: true, is_in_on_time_window: true}
+        - {receipt_id: R_LATE1,  receipt_issue: null, is_scoreable: true, is_in_on_time_window: false}
+        - {receipt_id: R_ORPHAN, receipt_issue: orphan_po_line, is_scoreable: false, is_in_on_time_window: false}
+        - {receipt_id: R_NOTS,   receipt_issue: missing_received_at, is_scoreable: false, is_in_on_time_window: false}
+        - {receipt_id: R_ZERO,   receipt_issue: nonpositive_cases, is_scoreable: false, is_in_on_time_window: false}
+
+  - name: test_otif_line_flags_at_charter_boundaries
+    description: >
+      Requested date Wed 2026-10-07 (ISO week 2026-10-05..11, final after 2026-10-18)
+      evaluated at run_date 2026-10-25 unless noted. Covers the on-time window edges,
+      exactly 98% in full, missed at +7 vs +8, cancellations, over-shipment at 105%,
+      provisional boundary, and lines not yet due.
+    model: int_po_lines__otif
+    overrides:
+      vars:
+        run_date: "2026-10-25"
+        on_time_days_early: 1
+        on_time_days_late: 0
+        in_full_threshold: 0.98
+        missed_after_days: 7
+        provisional_days_after_week: 7
+        over_shipment_threshold: 1.05
+    given:
+      - input: ref('stg_po_lines')
+        rows:
+          - {po_line_id: ON_MINUS1,   po_number: P1, line_status: active, ordered_cases: 100}
+          - {po_line_id: FULL_98,     po_number: P1, line_status: active, ordered_cases: 100}
+          - {po_line_id: SHORT_97,    po_number: P1, line_status: active, ordered_cases: 100}
+          - {po_line_id: LATE_PLUS1,  po_number: P1, line_status: active, ordered_cases: 100}
+          - {po_line_id: EARLY_MINUS2, po_number: P1, line_status: active, ordered_cases: 100}
+          - {po_line_id: LATE_PLUS7,  po_number: P1, line_status: active, ordered_cases: 100}
+          - {po_line_id: MISSED_PLUS8, po_number: P1, line_status: active, ordered_cases: 100}
+          - {po_line_id: NEVER,       po_number: P1, line_status: active, ordered_cases: 100}
+          - {po_line_id: SUP_CANCEL,  po_number: P1, line_status: cancelled_by_supplier, ordered_cases: 100}
+          - {po_line_id: NF_CANCEL,   po_number: P1, line_status: cancelled_by_northfield, ordered_cases: 100}
+          - {po_line_id: OVER_106,    po_number: P1, line_status: active, ordered_cases: 100}
+          - {po_line_id: OVER_105,    po_number: P1, line_status: active, ordered_cases: 100}
+          - {po_line_id: PROV_WEEK,   po_number: P2, line_status: active, ordered_cases: 100}
+          - {po_line_id: PENDING,     po_number: P3, line_status: active, ordered_cases: 100}
+          - {po_line_id: NOT_DUE,     po_number: P4, line_status: active, ordered_cases: 100}
+      - input: ref('stg_purchase_orders')
+        rows:
+          - {po_number: P1, supplier_id: S1, dc_id: DC01, requested_delivery_date: "2026-10-07"}
+          - {po_number: P2, supplier_id: S1, dc_id: DC01, requested_delivery_date: "2026-10-12"}  # week 10-12..18, provisional through 10-25
+          - {po_number: P3, supplier_id: S1, dc_id: DC01, requested_delivery_date: "2026-10-20"}  # +7 = 10-27, not missed yet
+          - {po_number: P4, supplier_id: S1, dc_id: DC01, requested_delivery_date: "2026-10-26"}  # after run_date
+      - input: ref('int_po_lines__receipt_rollup')
+        rows:
+          - {po_line_id: ON_MINUS1,    first_receipt_date: "2026-10-06", receipt_count: 1, cases_received_total: 100, cases_received_in_window: 100}
+          - {po_line_id: FULL_98,      first_receipt_date: "2026-10-07", receipt_count: 1, cases_received_total: 98,  cases_received_in_window: 98}
+          - {po_line_id: SHORT_97,     first_receipt_date: "2026-10-07", receipt_count: 1, cases_received_total: 97,  cases_received_in_window: 97}
+          - {po_line_id: LATE_PLUS1,   first_receipt_date: "2026-10-08", receipt_count: 1, cases_received_total: 100, cases_received_in_window: 0}
+          - {po_line_id: EARLY_MINUS2, first_receipt_date: "2026-10-05", receipt_count: 2, cases_received_total: 100, cases_received_in_window: 100}
+          - {po_line_id: LATE_PLUS7,   first_receipt_date: "2026-10-14", receipt_count: 1, cases_received_total: 100, cases_received_in_window: 0}
+          - {po_line_id: MISSED_PLUS8, first_receipt_date: "2026-10-15", receipt_count: 1, cases_received_total: 100, cases_received_in_window: 0}
+          - {po_line_id: OVER_106,     first_receipt_date: "2026-10-07", receipt_count: 1, cases_received_total: 106, cases_received_in_window: 106}
+          - {po_line_id: OVER_105,     first_receipt_date: "2026-10-07", receipt_count: 1, cases_received_total: 105, cases_received_in_window: 105}
+          - {po_line_id: PROV_WEEK,    first_receipt_date: "2026-10-12", receipt_count: 1, cases_received_total: 100, cases_received_in_window: 100}
+    expect:
+      rows:
+        - {po_line_id: ON_MINUS1,    is_eligible: true,  is_on_time: true,  is_in_full: true,  is_otif: true,  is_missed: false, is_over_shipment: false, is_provisional: false}
+        - {po_line_id: FULL_98,      is_eligible: true,  is_on_time: true,  is_in_full: true,  is_otif: true,  is_missed: false, is_over_shipment: false, is_provisional: false}
+        - {po_line_id: SHORT_97,     is_eligible: true,  is_on_time: true,  is_in_full: false, is_otif: false, is_missed: false, is_over_shipment: false, is_provisional: false}
+        - {po_line_id: LATE_PLUS1,   is_eligible: true,  is_on_time: false, is_in_full: false, is_otif: false, is_missed: false, is_over_shipment: false, is_provisional: false}
+        - {po_line_id: EARLY_MINUS2, is_eligible: true,  is_on_time: false, is_in_full: true,  is_otif: false, is_missed: false, is_over_shipment: false, is_provisional: false}
+        - {po_line_id: LATE_PLUS7,   is_eligible: true,  is_on_time: false, is_in_full: false, is_otif: false, is_missed: false, is_over_shipment: false, is_provisional: false}
+        - {po_line_id: MISSED_PLUS8, is_eligible: true,  is_on_time: false, is_in_full: false, is_otif: false, is_missed: true,  is_over_shipment: false, is_provisional: false}
+        - {po_line_id: NEVER,        is_eligible: true,  is_on_time: false, is_in_full: false, is_otif: false, is_missed: true,  is_over_shipment: false, is_provisional: false}
+        - {po_line_id: SUP_CANCEL,   is_eligible: true,  is_on_time: false, is_in_full: false, is_otif: false, is_missed: true,  is_over_shipment: false, is_provisional: false}
+        - {po_line_id: NF_CANCEL,    is_eligible: false, is_on_time: false, is_in_full: false, is_otif: false, is_missed: false, is_over_shipment: false, is_provisional: false}
+        - {po_line_id: OVER_106,     is_eligible: true,  is_on_time: true,  is_in_full: true,  is_otif: true,  is_missed: false, is_over_shipment: true,  is_provisional: false}
+        - {po_line_id: OVER_105,     is_eligible: true,  is_on_time: true,  is_in_full: true,  is_otif: true,  is_missed: false, is_over_shipment: false, is_provisional: false}
+        - {po_line_id: PROV_WEEK,    is_eligible: true,  is_on_time: true,  is_in_full: true,  is_otif: true,  is_missed: false, is_over_shipment: false, is_provisional: true}
+        - {po_line_id: PENDING,      is_eligible: true,  is_on_time: false, is_in_full: false, is_otif: false, is_missed: false, is_over_shipment: false, is_provisional: true}
+        - {po_line_id: NOT_DUE,      is_eligible: false, is_on_time: false, is_in_full: false, is_otif: false, is_missed: false, is_over_shipment: false, is_provisional: true}
