@@ -1,0 +1,30 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Raw files from data/raw/, loaded as-is by pipeline/load_raw.py with explicit
+      column types. Reference tables are fully replaced on each load; receipts are
+      replaced per recorded_date partition (_batch_date).
+    schema: raw
+    tables:
+      - name: suppliers
+        description: One row per supplier delivering to a Northfield DC.
+      - name: products
+        description: One row per SKU, each supplied by exactly one supplier.
+      - name: distribution_centers
+        description: The two Northfield distribution centers.
+      - name: purchase_orders
+        description: PO headers; requested_delivery_date is set per PO.
+      - name: po_lines
+        description: PO lines (one SKU on one PO), with Northfield/supplier cancellation status.
+      - name: receipts
+        description: >
+          Dock receipts against PO lines, partitioned by the date they were recorded.
+          Contains known data-quality issues (duplicates, orphans, malformed
+          timestamps and SKUs, non-positive quantities) that staging and later
+          layers handle.
+        loaded_at_field: _loaded_at
+        freshness:
+          warn_after: {count: 24, period: hour}
+          error_after: {count: 48, period: hour}

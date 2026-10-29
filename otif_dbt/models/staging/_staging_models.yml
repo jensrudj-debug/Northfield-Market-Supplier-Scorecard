@@ -1,0 +1,181 @@
+version: 2
+
+# Staging: renaming, casting, and receipt dedup only. Data-quality problems that
+# need business rules (orphans, missing or non-positive receipts) pass through
+# and are flagged here as `warn` tests; the expected failing-row counts below are
+# for the default generator config (seed 20261025) loaded in full.
+
+models:
+  - name: stg_suppliers
+    description: One row per supplier.
+    columns:
+      - name: supplier_id
+        description: Supplier key (SUPnnn).
+        data_tests: [unique, not_null]
+      - name: supplier_name
+        description: Supplier trading name.
+        data_tests: [not_null]
+      - name: supplier_category
+        description: Merchandise category the supplier ships to the DCs.
+        data_tests: [not_null]
+      - name: lead_time_days
+        description: Standard days from order to requested delivery.
+
+  - name: stg_products
+    description: One row per SKU.
+    columns:
+      - name: sku
+        description: Product key (SKUnnnnn).
+        data_tests: [unique, not_null]
+      - name: product_name
+        description: Product description including pack size.
+      - name: supplier_id
+        description: The one supplier that ships this SKU.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_suppliers'), field: supplier_id}
+      - name: product_category
+        description: Merchandise category.
+      - name: case_pack
+        description: Selling units per case.
+      - name: case_cost
+        description: Cost per case in USD.
+
+  - name: stg_distribution_centers
+    description: One row per Northfield distribution center.
+    columns:
+      - name: dc_id
+        description: DC key.
+        data_tests: [unique, not_null]
+      - name: dc_name
+        description: DC display name.
+      - name: dc_city
+        description: City the DC is in.
+      - name: dc_state
+        description: State the DC is in.
+      - name: dc_timezone
+        description: IANA timezone; receipt timestamps are recorded in this local time.
+        data_tests: [not_null]
+
+  - name: stg_purchase_orders
+    description: One row per purchase order header.
+    columns:
+      - name: po_number
+        description: PO key.
+        data_tests: [unique, not_null]
+      - name: supplier_id
+        description: Supplier the PO was placed with.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_suppliers'), field: supplier_id}
+      - name: dc_id
+        description: DC the PO is delivered to.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_distribution_centers'), field: dc_id}
+      - name: order_date
+        description: Date the PO was placed.
+        data_tests: [not_null]
+      - name: requested_delivery_date
+        description: Date Northfield asked for delivery (DC local date); the basis for on-time and attribution week.
+        data_tests: [not_null]
+
+  - name: stg_po_lines
+    description: One row per PO line (one SKU on one PO), the OTIF measurement grain.
+    columns:
+      - name: po_line_id
+        description: PO line key (po_number-line_number).
+        data_tests: [unique, not_null]
+      - name: po_number
+        description: Parent PO.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_purchase_orders'), field: po_number}
+      - name: line_number
+        description: Line number within the PO.
+      - name: sku
+        description: SKU ordered.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_products'), field: sku}
+      - name: ordered_cases
+        description: Cases ordered.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1}
+      - name: line_status
+        description: active, cancelled_by_northfield (not eligible for OTIF), or cancelled_by_supplier (an OTIF failure).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [active, cancelled_by_northfield, cancelled_by_supplier]
+      - name: cancelled_date
+        description: Date the line was cancelled; null for active lines.
+
+  - name: stg_receipts
+    description: >
+      One row per dock receipt, deduplicated on receipt_id (exact re-sent rows;
+      347 removed under the default config). SKUs are trimmed and upper-cased and
+      received_at is parsed from either ISO or MM/DD/YYYY HH:MM text.
+    columns:
+      - name: receipt_id
+        description: Receipt key.
+        data_tests: [unique, not_null]
+      - name: po_line_id
+        description: PO line received against. Orphans (no matching PO line) pass through.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_po_lines'), field: po_line_id}
+              config:
+                severity: warn  # expected: 174 orphan receipts
+      - name: po_number
+        description: PO received against, as recorded at the dock.
+      - name: dc_id
+        description: Receiving DC.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_distribution_centers'), field: dc_id}
+      - name: sku
+        description: SKU received, normalized to upper case with no surrounding spaces.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_products'), field: sku}
+      - name: received_at
+        description: Receipt timestamp in DC local time; null when missing or unparseable in the raw feed.
+        data_tests:
+          - not_null:
+              config:
+                severity: warn  # expected: 87 missing timestamps
+      - name: received_date
+        description: DC local date of received_at.
+      - name: received_cases
+        description: Cases received. Zero and negative values (receiving reversals) pass through.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1}
+              config:
+                severity: warn  # expected: 87 zero/negative rows
+      - name: rejected_cases
+        description: Cases refused at the dock (subset of received_cases).
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0}
+      - name: recorded_date
+        description: Date the receipt was recorded in the system (raw partition); can trail received_date when posted late.
+        data_tests: [not_null]
+      - name: loaded_at
+        description: UTC time the partition was loaded into the warehouse.
+      - name: source_file
+        description: Raw file the row came from, relative to data/raw/.
