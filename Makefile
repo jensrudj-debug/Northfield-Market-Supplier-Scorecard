@@ -1,4 +1,4 @@
-.PHONY: setup generate load build test docs run daily clean
+.PHONY: setup generate load build test docs run daily run-10x clean
 
 # Use the project venv when it exists; override with `make PYTHON=...`.
 ifeq ($(OS),Windows_NT)
@@ -36,6 +36,12 @@ run:
 daily:
 	$(if $(RUN_DATE),,$(error RUN_DATE is required, e.g. make daily RUN_DATE=2026-10-20))
 	$(PYTHON) pipeline/run_pipeline.py --mode daily --run-date $(RUN_DATE)
+
+# Full pipeline at 10x PO volume into a separate data dir and warehouse (docs/cost_profile.md).
+# run_pipeline.py has no --config/--raw-dir options, so its path constants are overridden here.
+run-10x: DUCKDB_PATH := $(CURDIR)/warehouse/otif_10x.duckdb
+run-10x:
+	$(PYTHON) -c "import sys; from pathlib import Path; from pipeline import run_pipeline as rp; rp.GENERATOR_CONFIG = Path('config/generator_10x.yml').resolve(); rp.RAW_DIR = Path('data/raw_10x').resolve(); sys.exit(0 if rp.run_pipeline('full', rp.default_run_date()) else 1)"
 
 clean:
 	@echo "clean: remove warehouse/, otif_dbt/target/, otif_dbt/dbt_packages/, otif_dbt/logs/"
