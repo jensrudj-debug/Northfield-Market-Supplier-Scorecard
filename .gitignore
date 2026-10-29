@@ -8,3 +8,4 @@ __pycache__/
 .env
 .pytest_cache/
 otif_dbt/.user.yml
+logs/

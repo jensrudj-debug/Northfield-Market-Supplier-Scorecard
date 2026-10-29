@@ -1,4 +1,4 @@
-.PHONY: setup generate load build test docs run clean
+.PHONY: setup generate load build test docs run daily clean
 
 # Use the project venv when it exists; override with `make PYTHON=...`.
 ifeq ($(OS),Windows_NT)
@@ -31,7 +31,11 @@ docs:
 	@echo "docs: dbt docs generate and serve"
 
 run:
-	@echo "run: full pipeline (generate -> load -> build -> test)"
+	$(PYTHON) pipeline/run_pipeline.py --mode full $(if $(RUN_DATE),--run-date $(RUN_DATE))
+
+daily:
+	$(if $(RUN_DATE),,$(error RUN_DATE is required, e.g. make daily RUN_DATE=2026-10-20))
+	$(PYTHON) pipeline/run_pipeline.py --mode daily --run-date $(RUN_DATE)
 
 clean:
 	@echo "clean: remove warehouse/, otif_dbt/target/, otif_dbt/dbt_packages/, otif_dbt/logs/"
