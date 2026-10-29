@@ -60,6 +60,10 @@ models:
 
   - name: stg_purchase_orders
     description: One row per purchase order header.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "order_date <= requested_delivery_date"
     columns:
       - name: po_number
         description: PO key.
@@ -85,6 +89,10 @@ models:
 
   - name: stg_po_lines
     description: One row per PO line (one SKU on one PO), the OTIF measurement grain.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "(line_status = 'active') = (cancelled_date is null)"
     columns:
       - name: po_line_id
         description: PO line key (po_number-line_number).
@@ -124,6 +132,10 @@ models:
       One row per dock receipt, deduplicated on receipt_id (exact re-sent rows;
       347 removed under the default config). SKUs are trimmed and upper-cased and
       received_at is parsed from either ISO or MM/DD/YYYY HH:MM text.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "received_cases <= 0 or rejected_cases <= received_cases"
     columns:
       - name: receipt_id
         description: Receipt key.

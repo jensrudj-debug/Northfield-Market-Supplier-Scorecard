@@ -64,6 +64,16 @@ models:
     description: >
       One row per PO line (charter "Measurement grain") with OTIF outcome flags
       evaluated as of run_date. Filter is_eligible for scorecard math.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "(receipt_count = 0) = (first_receipt_date is null)"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "isodow(attribution_week_start) = 1 and requested_delivery_date between attribution_week_start and attribution_week_start + 6"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "cases_received_in_window <= cases_received_total"
     columns:
       - name: po_line_id
         description: PO line key.
@@ -79,7 +89,10 @@ models:
               arguments: {to: ref('stg_suppliers'), field: supplier_id}
       - name: dc_id
         description: Receiving DC.
-        data_tests: [not_null]
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_distribution_centers'), field: dc_id}
       - name: sku
         description: SKU ordered.
         data_tests: [not_null]

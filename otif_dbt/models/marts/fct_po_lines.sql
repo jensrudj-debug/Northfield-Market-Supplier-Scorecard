@@ -24,4 +24,4 @@ select
     is_over_shipment,
     is_provisional,
     as_of_date
-from {{ ref('int_po_lines__otif') }}
+from {{ ref('int_po_line_fulfillment') }}

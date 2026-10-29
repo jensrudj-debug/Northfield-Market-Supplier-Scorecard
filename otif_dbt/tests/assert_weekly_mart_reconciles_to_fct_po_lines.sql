@@ -1,5 +1,6 @@
--- The weekly mart's eligible and OTIF line counts must equal the line-level fact
--- for every week it publishes. Returns rows only when they disagree.
+-- Business rule: the weekly scorecard must account for every eligible PO line and
+-- every OTIF line exactly once, so its totals equal the line-level fact for all
+-- published weeks. Returns a row only when the totals disagree.
 with from_lines as (
 
     select
